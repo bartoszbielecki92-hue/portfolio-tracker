@@ -139,7 +139,7 @@ with tab_portfolio:
                 return "color: #c62828; font-weight: bold"
             return ""
 
-        styled = df.style.applymap(color_change, subset=["Zmiana (PLN)", "Zmiana (%)"])
+        styled = df.style.map(color_change, subset=["Zmiana (PLN)", "Zmiana (%)"])
         st.subheader("Wszystkie pozycje")
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
