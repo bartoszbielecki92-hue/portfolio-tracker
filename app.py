@@ -4,6 +4,7 @@ import plotly.express as px
 from datetime import date, datetime
 from database import (
     init_db,
+    ping,
     add_asset, update_asset, delete_asset, get_assets,
     add_transaction, update_transaction, delete_transaction, get_transactions,
     add_bond, update_bond, delete_bond, get_bonds,
@@ -11,6 +12,7 @@ from database import (
 from prices import fetch_prices, fetch_fx_rates, to_pln
 from bonds_data import parse_symbol, fetch_bond_params, fetch_nbp_rate, project_maturity_value
 
+ping()
 init_db()
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")

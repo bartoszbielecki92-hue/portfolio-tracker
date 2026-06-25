@@ -14,6 +14,13 @@ def get_connection():
     return conn
 
 
+def ping():
+    """Keep Supabase project alive — call on every app start."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+
+
 def init_db():
     with get_connection() as conn:
         with conn.cursor() as cur:
