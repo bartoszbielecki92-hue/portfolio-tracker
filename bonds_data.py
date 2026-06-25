@@ -200,3 +200,133 @@ def project_maturity_value(
         "breakdown": breakdown,
         "assumptions": " · ".join(assumptions),
     }
+
+
+# Early redemption fee per 100 PLN of face value (PLN)
+_REDEMPTION_FEE = {
+    "OTS": 0.0,
+    "ROR": 0.50,
+    "DOR": 0.70,
+    "TOS": 0.70,
+    "COI": 0.70,
+    "EDO": 2.00,
+    "ROS": 1.00,
+    "ROD": 2.00,
+}
+
+
+def calculate_bond_at_date(
+    bond_type: str,
+    face_value: float,
+    buy_date,          # date object — today for new purchase
+    target_date,       # date object — when user wants the money
+    params: dict,
+    assumed_inflation: float = 0.04,
+    nbp_rate: Optional[float] = None,
+) -> Optional[dict]:
+    """
+    Calculate what face_value PLN invested in bond_type today will be worth
+    on target_date, accounting for early redemption penalty if needed.
+
+    Returns dict with:
+      bond_type, years, maturity_date, redeemed_early,
+      value_at_target, gain, gain_pct, net_annual_return,
+      penalty_applied, scenario, assumptions
+    """
+    from datetime import date as date_cls
+    import math
+
+    if not params:
+        return None
+
+    years = params.get("years", 1)
+    r1 = params.get("rate1") or 0.0
+    margin = params.get("margin") or 0.0
+    is_inflation = params.get("is_inflation", False)
+    is_nbp = params.get("is_nbp", False)
+
+    # Maturity date of bond bought today
+    if years == 0.25:
+        from datetime import timedelta
+        maturity = buy_date + timedelta(days=92)
+    else:
+        y_int = int(years)
+        try:
+            maturity = date_cls(buy_date.year + y_int, buy_date.month, buy_date.day)
+        except ValueError:
+            maturity = date_cls(buy_date.year + y_int, buy_date.month, 28)
+
+    redeemed_early = target_date < maturity
+    redemption_date = target_date if redeemed_early else maturity
+
+    # Build year-by-year schedule up to redemption_date
+    days_held = (redemption_date - buy_date).days
+    value = face_value
+    breakdown = []
+
+    if bond_type == "OTS":
+        rate = r1
+        days = min(days_held, 92)
+        value = round(face_value * (1 + rate * days / 365), 2)
+        breakdown.append(("3 miesiące", rate, value))
+    else:
+        full_years = days_held // 365
+        remaining_days = days_held % 365
+
+        for y in range(1, int(years) + 1):
+            if y <= full_years:
+                if is_inflation:
+                    rate = r1 if y == 1 else (assumed_inflation + margin)
+                elif is_nbp:
+                    rate = r1 if y == 1 else ((nbp_rate or 0.055) + margin)
+                else:
+                    rate = r1
+                value = round(value * (1 + rate), 2)
+                breakdown.append((f"Rok {y} (pełny)", rate, value))
+            elif remaining_days > 0 and y == full_years + 1:
+                # Partial year — pro-rata interest
+                if is_inflation:
+                    rate = r1 if y == 1 else (assumed_inflation + margin)
+                elif is_nbp:
+                    rate = r1 if y == 1 else ((nbp_rate or 0.055) + margin)
+                else:
+                    rate = r1
+                value = round(value * (1 + rate * remaining_days / 365), 2)
+                breakdown.append((f"Rok {y} ({remaining_days} dni)", rate, value))
+                break
+            else:
+                break
+
+    # Apply early redemption penalty if needed
+    penalty = 0.0
+    if redeemed_early:
+        fee_per_100 = _REDEMPTION_FEE.get(bond_type, 0.0)
+        penalty = round(fee_per_100 * face_value / 100, 2)
+        # Penalty deducted from interest, not principal — value can't drop below face_value
+        interest = value - face_value
+        actual_penalty = min(penalty, interest)
+        value = round(value - actual_penalty, 2)
+        penalty = actual_penalty
+
+    gain = round(value - face_value, 2)
+    gain_pct = round(gain / face_value * 100, 2) if face_value else 0
+    years_held = days_held / 365
+    net_annual = round((math.pow(value / face_value, 1 / years_held) - 1) * 100, 2) if years_held > 0 else 0
+
+    scenario = "do terminu" if not redeemed_early else "przedterminowy wykup"
+
+    return {
+        "bond_type": bond_type,
+        "years_total": years,
+        "maturity_date": maturity.strftime("%Y-%m-%d"),
+        "redemption_date": redemption_date.strftime("%Y-%m-%d"),
+        "redeemed_early": redeemed_early,
+        "days_held": days_held,
+        "value_at_target": value,
+        "gain": gain,
+        "gain_pct": gain_pct,
+        "net_annual_return": net_annual,
+        "penalty": penalty,
+        "scenario": scenario,
+        "breakdown": breakdown,
+    }

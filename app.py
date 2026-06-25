@@ -10,7 +10,7 @@ from database import (
     add_bond, update_bond, delete_bond, get_bonds,
 )
 from prices import fetch_prices, fetch_fx_rates, to_pln
-from bonds_data import parse_symbol, fetch_bond_params, fetch_nbp_rate, project_maturity_value
+from bonds_data import parse_symbol, fetch_bond_params, fetch_nbp_rate, project_maturity_value, calculate_bond_at_date
 
 ping()
 init_db()
@@ -353,3 +353,110 @@ with tab_bonds:
                             delete_bond(b["id"])
                             st.warning("Obligacja usunięta.")
                             st.rerun()
+
+    # ── Kalkulator zakupu obligacji ─────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Kalkulator zakupu obligacji")
+    st.caption("Sprawdź, który typ obligacji da najlepszy wynik do wybranej daty wypłaty.")
+
+    with st.form("bond_calc_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            calc_amount = st.number_input("Kwota inwestycji (PLN)", min_value=100.0, value=10000.0, step=100.0)
+        with col2:
+            calc_target = st.date_input("Data wypłaty", value=date(2030, 2, 1), key="calc_target_date")
+        with col3:
+            calc_inflation = st.slider("Zakładana inflacja (%)", min_value=1.0, max_value=15.0, value=4.0, step=0.5) / 100
+        calc_submit = st.form_submit_button("Oblicz", type="primary")
+
+    if calc_submit:
+        today = date.today()
+        nbp_rate_calc = fetch_nbp_rate()
+        BOND_TYPES = ["OTS", "ROR", "DOR", "TOS", "COI", "EDO", "ROS", "ROD"]
+        BOND_LABELS = {
+            "OTS": "OTS — 3-miesięczne",
+            "ROR": "ROR — 1-roczne",
+            "DOR": "DOR — 2-letnie",
+            "TOS": "TOS — 3-letnie",
+            "COI": "COI — 4-letnie",
+            "EDO": "EDO — 10-letnie",
+            "ROS": "ROS — 6-letnie",
+            "ROD": "ROD — 12-letnie",
+        }
+
+        results = []
+        with st.spinner("Pobieram dane z obligacjeskarbowe.pl…"):
+            for bt in BOND_TYPES:
+                params = fetch_bond_params(bt)
+                if not params:
+                    continue
+                r = calculate_bond_at_date(
+                    bond_type=bt,
+                    face_value=calc_amount,
+                    buy_date=today,
+                    target_date=calc_target,
+                    params=params,
+                    assumed_inflation=calc_inflation,
+                    nbp_rate=nbp_rate_calc,
+                )
+                if r:
+                    results.append(r)
+
+        if not results:
+            st.warning("Nie udało się pobrać danych z obligacjeskarbowe.pl. Spróbuj ponownie.")
+        else:
+            results.sort(key=lambda x: x["net_annual_return"], reverse=True)
+
+            rows_calc = []
+            for r in results:
+                rows_calc.append({
+                    "Typ": BOND_LABELS.get(r["bond_type"], r["bond_type"]),
+                    "Zapadalność": r["maturity_date"],
+                    "Scenariusz": r["scenario"],
+                    "Wartość (PLN)": r["value_at_target"],
+                    "Zysk (PLN)": r["gain"],
+                    "Zysk (%)": r["gain_pct"],
+                    "Zwrot roczny (%)": r["net_annual_return"],
+                    "Kara (PLN)": r["penalty"] if r["redeemed_early"] else 0,
+                    "_early": r["redeemed_early"],
+                })
+
+            df_calc = pd.DataFrame(rows_calc)
+
+            def color_scenario(val):
+                if val == "przedterminowy wykup":
+                    return "color: #e65100"
+                return "color: #1b5e20"
+
+            def color_gain(val):
+                if isinstance(val, (int, float)):
+                    return "color: #1b5e20; font-weight: bold" if val > 0 else ""
+                return ""
+
+            styled_calc = (
+                df_calc.drop(columns=["_early"])
+                .style
+                .map(color_scenario, subset=["Scenariusz"])
+                .map(color_gain, subset=["Zysk (PLN)", "Zysk (%)", "Zwrot roczny (%)"])
+                .format({
+                    "Wartość (PLN)": "{:,.2f}",
+                    "Zysk (PLN)": "{:,.2f}",
+                    "Zysk (%)": "{:.2f}%",
+                    "Zwrot roczny (%)": "{:.2f}%",
+                    "Kara (PLN)": "{:.2f}",
+                })
+            )
+
+            days_to_target = (calc_target - today).days
+            years_to_target = days_to_target / 365
+            st.markdown(
+                f"**{calc_amount:,.0f} PLN** zainwestowane dziś, wypłata **{calc_target.strftime('%d.%m.%Y')}** "
+                f"(za {years_to_target:.1f} lat) — posortowane wg rocznego zwrotu:"
+            )
+            st.dataframe(styled_calc, use_container_width=True, hide_index=True)
+
+            st.caption(
+                "Scenariusz 'do terminu' = obligacja zapada przed lub w dniu wypłaty. "
+                "'Przedterminowy wykup' = zerwanie przed terminem, kara potrącana z odsetek. "
+                "Zwrot roczny = efektywna roczna stopa składana (CAGR)."
+            )
