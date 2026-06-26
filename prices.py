@@ -21,7 +21,24 @@ def fetch_prices(tickers: tuple) -> dict:
         data = yf.Tickers(" ".join(yf_symbols))
         for orig, yf_sym in zip(tickers, yf_symbols):
             try:
-                price = data.tickers[yf_sym].fast_info["lastPrice"]
+                ticker_obj = data.tickers[yf_sym]
+                price = None
+                try:
+                    price = ticker_obj.fast_info["lastPrice"]
+                except Exception:
+                    pass
+                if not price:
+                    try:
+                        price = ticker_obj.fast_info.get("last_price")
+                    except Exception:
+                        pass
+                if not price:
+                    try:
+                        hist = ticker_obj.history(period="1d")
+                        if not hist.empty:
+                            price = float(hist["Close"].iloc[-1])
+                    except Exception:
+                        pass
                 result[orig] = float(price) if price else None
             except Exception:
                 result[orig] = None
