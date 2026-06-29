@@ -21,7 +21,11 @@ st.title("Portfolio Tracker")
 CATEGORIES = ["stock", "etf", "bond", "crypto"]
 CURRENCIES = ["USD", "EUR", "PLN", "GBP"]
 
-tab_portfolio, tab_assets, tab_bonds = st.tabs(["Portfel", "Pozycje", "Obligacje"])
+tab_portfolio, tab_assets, tab_bonds, tab_tracker = st.tabs(["Portfel", "Pozycje", "Obligacje", "🚗 Tracker Wykupu Mini"])
+
+WYKUP_CEL = 141952.80
+WYKUP_DATA = date(2030, 2, 20)
+WYKUP_START = date(2026, 2, 20)  # start najmu 4 lata wstecz
 
 # ── TAB: Portfel ──────────────────────────────────────────────────────────────
 with tab_portfolio:
@@ -460,3 +464,148 @@ with tab_bonds:
                 "'Przedterminowy wykup' = zerwanie przed terminem, kara potrącana z odsetek. "
                 "Zwrot roczny = efektywna roczna stopa składana (CAGR)."
             )
+
+# ── TAB: Tracker Wykupu Mini ──────────────────────────────────────────────────
+with tab_tracker:
+    today = date.today()
+
+    # Pobierz aktualną wartość portfela (te same dane co w zakładce Portfel)
+    _assets = get_assets()
+    _transactions = get_transactions()
+    _bonds = get_bonds()
+
+    _api_symbols = []
+    for _a in _assets:
+        _pc = _a["price_currency"] or _a["currency"]
+        _sym = f"{_a['ticker']}/{_pc}" if _a["category"] == "crypto" else _a["ticker"]
+        _txns = [t for t in _transactions if t["asset_id"] == _a["id"]]
+        if sum(t["quantity"] for t in _txns) > 0:
+            _api_symbols.append(_sym)
+
+    _prices = fetch_prices(tuple(_api_symbols)) if _api_symbols else {}
+    _fx = fetch_fx_rates()
+
+    portfolio_pln = 0.0
+    for _a in _assets:
+        _pc = _a["price_currency"] or _a["currency"]
+        _sym = f"{_a['ticker']}/{_pc}" if _a["category"] == "crypto" else _a["ticker"]
+        _txns = [t for t in _transactions if t["asset_id"] == _a["id"]]
+        _qty = sum(t["quantity"] for t in _txns)
+        if _qty == 0:
+            continue
+        _cp = _prices.get(_sym)
+        if _cp:
+            _val = to_pln(_cp * _qty, _pc, _fx)
+            if _val:
+                portfolio_pln += _val
+
+    for _b in _bonds:
+        _face = float(_b["face_value"])
+        _rate = float(_b["coupon_rate"])
+        _bd = datetime.strptime(_b["buy_date"], "%Y-%m-%d").date()
+        _md = datetime.strptime(_b["maturity_date"], "%Y-%m-%d").date()
+        _dh = (today - _bd).days
+        _dt = (_md - _bd).days
+        _frac = min(_dh / _dt, 1.0) if _dt > 0 else 0
+        portfolio_pln += round(_face + _face * _rate * _frac, 2)
+
+    # Obliczenia
+    total_days = (WYKUP_DATA - WYKUP_START).days
+    elapsed_days = max((today - WYKUP_START).days, 0)
+    remaining_days = max((WYKUP_DATA - today).days, 0)
+    progress_pct = min(elapsed_days / total_days, 1.0)
+
+    expected_now = round(WYKUP_CEL * progress_pct, 2)
+    gap_vs_expected = round(portfolio_pln - expected_now, 2)
+    still_needed = round(WYKUP_CEL - portfolio_pln, 2)
+    remaining_months = remaining_days / 30.44
+    monthly_needed = round(still_needed / remaining_months, 2) if remaining_months > 0 else 0
+
+    on_track = portfolio_pln >= expected_now
+
+    st.subheader("🚗 Tracker Wykupu Mini")
+    st.caption(f"Cel: **{WYKUP_CEL:,.2f} PLN** do **{WYKUP_DATA.strftime('%d.%m.%Y')}**")
+
+    # Pasek postępu
+    st.markdown("#### Postęp do celu")
+    progress_portfolio = min(portfolio_pln / WYKUP_CEL, 1.0)
+    st.progress(progress_portfolio)
+    st.caption(f"{portfolio_pln:,.2f} PLN z {WYKUP_CEL:,.2f} PLN ({progress_portfolio*100:.1f}%)")
+
+    # Metryki
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(
+        "Wartość portfela",
+        f"{portfolio_pln:,.2f} PLN",
+    )
+    col2.metric(
+        "Oczekiwane na dziś",
+        f"{expected_now:,.2f} PLN",
+        delta=f"{gap_vs_expected:+,.2f} PLN",
+        delta_color="normal",
+    )
+    col3.metric(
+        "Jeszcze brakuje",
+        f"{still_needed:,.2f} PLN",
+    )
+    col4.metric(
+        "Potrzebne/mies.",
+        f"{monthly_needed:,.2f} PLN",
+        help="Ile miesięcznie trzeba dołożyć do portfela (bez wzrostu wartości aktywów)",
+    )
+
+    if on_track:
+        st.success(f"✅ Jesteś **{gap_vs_expected:,.2f} PLN powyżej** liniowego planu — na dobrej drodze!")
+    else:
+        st.warning(f"⚠️ Jesteś **{abs(gap_vs_expected):,.2f} PLN poniżej** liniowego planu.")
+
+    # Wykres: linia celu + aktualna pozycja
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+
+    # Linia celu (liniowa)
+    fig.add_trace(go.Scatter(
+        x=[WYKUP_START.isoformat(), WYKUP_DATA.isoformat()],
+        y=[0, WYKUP_CEL],
+        mode="lines",
+        name="Plan (liniowy)",
+        line=dict(color="#9e9e9e", dash="dash", width=2),
+    ))
+
+    # Linia celu pozioma
+    fig.add_trace(go.Scatter(
+        x=[WYKUP_START.isoformat(), WYKUP_DATA.isoformat()],
+        y=[WYKUP_CEL, WYKUP_CEL],
+        mode="lines",
+        name=f"Cel: {WYKUP_CEL:,.0f} PLN",
+        line=dict(color="#c62828", dash="dot", width=1),
+    ))
+
+    # Aktualna wartość
+    fig.add_trace(go.Scatter(
+        x=[today.isoformat()],
+        y=[portfolio_pln],
+        mode="markers+text",
+        name="Wartość dziś",
+        marker=dict(color="#1b5e20" if on_track else "#e65100", size=14),
+        text=[f"{portfolio_pln:,.0f} PLN"],
+        textposition="top center",
+    ))
+
+    fig.update_layout(
+        height=360,
+        margin=dict(t=30, b=40, l=10, r=10),
+        xaxis_title="",
+        yaxis_title="PLN",
+        yaxis_tickformat=",.0f",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    remaining_years = remaining_days / 365
+    st.caption(
+        f"Pozostało **{remaining_days} dni** ({remaining_years:.1f} lat) do {WYKUP_DATA.strftime('%d.%m.%Y')}. "
+        f"Plan liniowy zakłada równomierny wzrost od {WYKUP_START.strftime('%d.%m.%Y')}."
+    )
