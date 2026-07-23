@@ -592,10 +592,11 @@ with tab_tracker:
     fig.add_trace(go.Scatter(
         x=plan_dates,
         y=plan_values,
-        mode="lines",
+        mode="lines+markers",
         name="Plan (liniowy)",
         line=dict(color="#9e9e9e", dash="dash", width=2),
-        hovertemplate="Plan: <b>%{y:,.0f} PLN</b><extra></extra>",
+        marker=dict(size=6, color="#9e9e9e"),
+        hovertemplate="%{x|%b %Y}<br>Plan: <b>%{y:,.0f} PLN</b><extra></extra>",
     ))
 
     # Linia celu pozioma
@@ -626,7 +627,7 @@ with tab_tracker:
         yaxis_title="PLN",
         yaxis_tickformat=",.0f",
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        hovermode="x unified",
+        hovermode="closest",
     )
     st.plotly_chart(fig, use_container_width=True)
 
