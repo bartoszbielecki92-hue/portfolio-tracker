@@ -568,16 +568,34 @@ with tab_tracker:
 
     # Wykres: linia celu + aktualna pozycja
     import plotly.graph_objects as go
+    from datetime import timedelta
+
+    # Miesięczne punkty linii planu (pierwszy dzień każdego miesiąca)
+    plan_dates, plan_values = [], []
+    cur = WYKUP_START.replace(day=1)
+    while cur <= WYKUP_DATA:
+        d = max(cur, WYKUP_START)
+        frac = (d - WYKUP_START).days / total_days
+        plan_dates.append(d.isoformat())
+        plan_values.append(round(WYKUP_CEL * frac, 2))
+        # następny miesiąc
+        if cur.month == 12:
+            cur = cur.replace(year=cur.year + 1, month=1)
+        else:
+            cur = cur.replace(month=cur.month + 1)
+    plan_dates.append(WYKUP_DATA.isoformat())
+    plan_values.append(WYKUP_CEL)
 
     fig = go.Figure()
 
-    # Linia celu (liniowa)
+    # Linia planu liniowego z miesięcznymi punktami
     fig.add_trace(go.Scatter(
-        x=[WYKUP_START.isoformat(), WYKUP_DATA.isoformat()],
-        y=[0, WYKUP_CEL],
+        x=plan_dates,
+        y=plan_values,
         mode="lines",
         name="Plan (liniowy)",
         line=dict(color="#9e9e9e", dash="dash", width=2),
+        hovertemplate="Plan: <b>%{y:,.0f} PLN</b><extra></extra>",
     ))
 
     # Linia celu pozioma
@@ -587,6 +605,7 @@ with tab_tracker:
         mode="lines",
         name=f"Cel: {WYKUP_CEL:,.0f} PLN",
         line=dict(color="#c62828", dash="dot", width=1),
+        hovertemplate=f"Cel: {WYKUP_CEL:,.0f} PLN<extra></extra>",
     ))
 
     # Aktualna wartość
