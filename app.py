@@ -90,11 +90,14 @@ with tab_portfolio:
         coupon_rate = float(b["coupon_rate"])
         buy_date = datetime.strptime(b["buy_date"], "%Y-%m-%d").date()
         maturity_date = datetime.strptime(b["maturity_date"], "%Y-%m-%d").date()
-        days_held = (today - buy_date).days
-        days_total = (maturity_date - buy_date).days
-        fraction = min(days_held / days_total, 1.0) if days_total > 0 else 0
-        accrued = round(face * coupon_rate * fraction, 2)
-        current_val = round(face + accrued, 2)
+        days_held = max((today - buy_date).days, 0)
+        full_years = min(days_held // 365, int((maturity_date - buy_date).days // 365))
+        remaining_days = days_held % 365
+        current_val = face
+        for _ in range(full_years):
+            current_val = round(current_val * (1 + coupon_rate), 2)
+        current_val = round(current_val * (1 + coupon_rate * remaining_days / 365), 2)
+        accrued = round(current_val - face, 2)
         rows.append({
             "Nazwa": b["name"],
             "Ticker": "—",
@@ -504,10 +507,14 @@ with tab_tracker:
         _rate = float(_b["coupon_rate"])
         _bd = datetime.strptime(_b["buy_date"], "%Y-%m-%d").date()
         _md = datetime.strptime(_b["maturity_date"], "%Y-%m-%d").date()
-        _dh = (today - _bd).days
-        _dt = (_md - _bd).days
-        _frac = min(_dh / _dt, 1.0) if _dt > 0 else 0
-        portfolio_pln += round(_face + _face * _rate * _frac, 2)
+        _dh = max((today - _bd).days, 0)
+        _fy = min(_dh // 365, int((_md - _bd).days // 365))
+        _rd = _dh % 365
+        _bval = _face
+        for _ in range(_fy):
+            _bval = round(_bval * (1 + _rate), 2)
+        _bval = round(_bval * (1 + _rate * _rd / 365), 2)
+        portfolio_pln += _bval
 
     # Obliczenia
     total_days = (WYKUP_DATA - WYKUP_START).days
